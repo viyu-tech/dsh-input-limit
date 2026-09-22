@@ -2,15 +2,15 @@
   "name": "dsh-input-limit",
   "version": "0.1.1",
   "description": "Set the current model's input limit (context window) directly from the dsh web composer.",
-  "author": "vvbn2zfv26-tech",
+  "author": "viyu-tech",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/vvbn2zfv26-tech/dsh-input-limit.git"
+    "url": "git+https://github.com/viyu-tech/dsh-input-limit.git"
   },
   "bugs": {
-    "url": "https://github.com/vvbn2zfv26-tech/dsh-input-limit/issues"
+    "url": "https://github.com/viyu-tech/dsh-input-limit/issues"
   },
-  "homepage": "https://github.com/vvbn2zfv26-tech/dsh-input-limit#readme",
+  "homepage": "https://github.com/viyu-tech/dsh-input-limit#readme",
   "icon": "icon.svg",
   "type": "module",
   "main": "lib/index.mjs",
