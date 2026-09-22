@@ -55,6 +55,7 @@ export function InputLimitChip({
         },
         (reason: unknown) => {
           if (cancelled || !alive.current) return
+          console.warn('[dsh-input-limit] read failed:', reason)
           setView({ status: 'error', message: failureText(reason) })
         },
       )
@@ -69,10 +70,11 @@ export function InputLimitChip({
 
   if (view.status !== 'ready') return null
   const current = view.read
+  // No numeric value at hand (neither an override nor a route default): render
+  // the bare, clickable label — the point is to let the user set a limit.
   const compact = current.limit !== undefined
     ? formatCompact(current.limit)
     : current.defaultLimit !== undefined ? formatCompact(current.defaultLimit) : null
-  if (compact === null) return null
   const isDefault = current.limit === undefined
 
   const openPopover = (): void => {
@@ -121,7 +123,9 @@ export function InputLimitChip({
     })
   }
 
-  const label = `${t('chip.label')} ${compact}${isDefault ? ` · ${t('chip.defaultTag')}` : ''}`
+  const label = compact !== null
+    ? `${t('chip.label')} ${compact}${isDefault ? ` · ${t('chip.defaultTag')}` : ''}`
+    : `${t('chip.label')} · ${t('chip.defaultTag')}`
   const title = `${t('chip.title')} — ${current.model}`
 
   return (

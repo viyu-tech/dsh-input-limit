@@ -83,8 +83,9 @@ else inlined, CSS Modules compiled with lightningcss and injected as a
 Dependency-free sanity checks (no install needed, Node ≥ 22):
 `node tests/bundle-smoke.mjs` (loads `lib/client.js` under a stub
 `__ModuleLoader__`), plus `node --experimental-strip-types tests/capacity.verify.mjs`
-and `tests/provider.verify.mjs` (logic + an end-to-end run against a mock
-api-remotes wire built from a real pi-ai route layout).
+and `tests/provider.verify.mjs` (logic + an end-to-end run against a mock rc.2
+client wire — the Typert `ctx.remote` namespaces and the `ctx.sessions` object
+layer — built from a real pi-ai route layout).
 
 ## How it works
 
@@ -92,10 +93,13 @@ api-remotes wire built from a real pi-ai route layout).
   no-op whose presence makes the Host serve the browser half.
 - `src/client/index.ts` registers a component into the composer's
   `conversation.input.right` list seat.
-- `src/client/provider.ts` resolves the session's current model
-  (`sessions.models`), maps it to its settings namespace/path
-  (`llm.providers`), reads the effective context window, and writes the
-  override with `settings.mutate` (preserving the rest of the models array).
+- `src/client/provider.ts` resolves the session's current model from its
+  durable `modelSelection` projection (`ctx.sessions`), maps it to the
+  provider's settings namespace via `ctx.remote.settings.describe()`, reads the
+  effective context window, and writes the override with
+  `ctx.remote.settings.mutate(ns, ops, expectedRevision)` (preserving the rest
+  of the models array). The forwarded `settings/document-updated` event and the
+  session's model projection refresh open chips live.
 
 ## Development & contributing
 

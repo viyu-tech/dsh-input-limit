@@ -1,12 +1,14 @@
 /**
  * Client-side data access for the input-limit control. Everything rides the
- * api-remotes wire face — no custom host code — so the pill both reads and
- * writes through the same typed RPCs the Settings page uses.
+ * 0.1.5-rc.2 client wire face — the Typert `ctx.remote` namespaces and the
+ * `ctx.sessions` object layer — so the pill both reads and writes through the
+ * same Remote calls the Settings page uses. No custom host code.
  */
 
 import type {
-  IApiClient, RpcResult, SessionId, SettingsNamespaceView, SettingsPathOpView,
-} from '@deepseek-ai/dsh-api-remotes/client'
+  ModelProjectionFace, ModelSelection, ProviderDeps, RemoteResult,
+  SettingsNamespaceView, SettingsPathOpView,
+} from './wire.ts'
 
 /** One resolved model-input-limit snapshot for the composer seat. */
 export interface LimitRead {
@@ -39,9 +41,9 @@ export interface LimitWrite {
   limit: number | undefined
 }
 
-/** Serialize a failed RPC result into a user-visible line (never localized). */
-function rpcFailure(result: Extract<RpcResult<unknown>, { ok: false }>): string {
-  return `${result.error.message} (${result.error.code})`
+/** Serialize a failed Remote result into a user-visible line (never localized). */
+function rpcFailure(error: { message: string; code: string }): string {
+  return `${error.message} (${error.code})`
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -70,8 +72,15 @@ function arrayAt(value: unknown, path: readonly string[]): Array<Record<string, 
   return Array.isArray(node) ? node.filter(isRecord) : undefined
 }
 
-function namespaceOf(view: { namespaces: SettingsNamespaceView[] }, ns: string): SettingsNamespaceView | undefined {
-  return view.namespaces.find(entry => entry.ns === ns)
+/** The namespace whose resolved `providers` dict contains `providerRoute`. */
+function namespaceForRoute(
+  view: { namespaces: readonly SettingsNamespaceView[] },
+  providerRoute: string,
+): SettingsNamespaceView | undefined {
+  return view.namespaces.find(entry => {
+    const providers = isRecord(entry.value) ? entry.value.providers : undefined
+    return isRecord(providers) && providers[providerRoute] !== undefined
+  })
 }
 
 function modelsOf(namespace: SettingsNamespaceView | undefined, modelsPath: readonly string[]): Array<Record<string, unknown>> {
@@ -79,55 +88,71 @@ function modelsOf(namespace: SettingsNamespaceView | undefined, modelsPath: read
   return arrayAt(namespace.value, modelsPath) ?? []
 }
 
+/** The current model selection for one session: the durable fold, then the host catalog default. */
+async function currentSelection(deps: ProviderDeps): Promise<ModelSelection | null> {
+  const binding = deps.sessions.binding(deps.sessionId)
+  const projected: ModelProjectionFace | undefined = binding?.session.projections.faceOf('modelSelection')
+  const durable = projected?.next ?? projected?.lastUsed ?? null
+  if (durable !== null && durable !== undefined) return durable
+  const catalog = await deps.remote.session.modelCatalog()
+  if (!catalog.ok) return null
+  return catalog.value.default
+}
+
 /**
  * Resolve the session's current model to its configurable provider, read the
  * effective per-model context window, and report its settings address.
- * @param api - the connected wire face.
- * @param sessionId - owning session.
- * @returns the snapshot.
+ * @param deps - the wire faces and the owning session.
+ * @returns the snapshot; `editable: false` means the seat should render nothing.
  */
-export async function readLimit(api: IApiClient, sessionId: SessionId): Promise<LimitRead> {
-  const directory = await api.sessions.models({ sessionId })
-  if (!directory.result.ok) throw new Error(rpcFailure(directory.result))
-  const current = directory.result.value.current
-
-  const directoryResult = await api.llm.providers({})
-  if (!directoryResult.result.ok) throw new Error(rpcFailure(directoryResult.result))
-  const provider = directoryResult.result.value.providers.find(entry => entry.provider === current.provider)
-  if (provider === undefined || provider.settingsNs === '') {
-    return {
-      editable: false,
-      writable: false,
-      namespace: '',
-      profilePath: [],
-      modelsPath: [],
-      provider: current.provider,
-      model: current.model,
-      limit: undefined,
-      defaultLimit: undefined,
-      revision: undefined,
-    }
+export async function readLimit(deps: ProviderDeps): Promise<LimitRead> {
+  const current = await currentSelection(deps)
+  if (current === null) {
+    return deadRead(false, '', '')
   }
 
-  const describe = await api.settings.describe({})
-  if (!describe.result.ok) throw new Error(rpcFailure(describe.result))
-  const namespace = namespaceOf(describe.result.value, provider.settingsNs)
-  const profilePath = provider.settingsPath
-  const modelsPath = [...profilePath, 'models']
+  const describe = await deps.remote.settings.describe()
+  if (!describe.ok) throw new Error(rpcFailure(describe.error))
+  const view = describe.value
+  const namespace = namespaceForRoute(view, current.provider)
+  if (namespace === undefined) {
+    return deadRead(view.writable, current.provider, current.model)
+  }
+
+  const profilePath: readonly string[] = ['providers', current.provider]
+  const modelsPath: readonly string[] = [...profilePath, 'models']
   const models = modelsOf(namespace, modelsPath)
-  const entry = models.find(model => stringOf(model.id) === current.model)
+  const entry = models.find(row => stringOf(row.id) === current.model)
   const limit = typeof entry?.contextWindow === 'number' ? entry.contextWindow : undefined
   return {
     editable: true,
-    writable: describe.result.value.writable,
-    namespace: provider.settingsNs,
+    writable: view.writable,
+    namespace: namespace.ns,
     profilePath,
     modelsPath,
     provider: current.provider,
     model: current.model,
     limit,
-    defaultLimit: numberAt(namespace?.value, [...profilePath, 'defaultContextWindow']),
-    revision: namespace?.revision,
+    defaultLimit: numberAt(namespace.value, [...profilePath, 'defaultContextWindow'])
+      ?? numberAt(namespace.base, [...profilePath, 'defaultContextWindow'])
+      ?? numberAt(namespace.user, [...profilePath, 'defaultContextWindow']),
+    revision: namespace.revision,
+  }
+}
+
+/** A non-editable snapshot (no model, or a provider not present in any settings namespace). */
+function deadRead(writable: boolean, provider: string, model: string): LimitRead {
+  return {
+    editable: false,
+    writable,
+    namespace: '',
+    profilePath: [],
+    modelsPath: [],
+    provider,
+    model,
+    limit: undefined,
+    defaultLimit: undefined,
+    revision: undefined,
   }
 }
 
@@ -146,78 +171,72 @@ function withModelLimit(
   return [...models, { id: model, contextWindow: limit }]
 }
 
-/** The settings namespace's `models` array plus its document revision, for a write. */
-async function settingsModels(
-  api: IApiClient,
-  namespaceKey: string,
-  modelsPath: readonly string[],
-): Promise<{ models: Array<Record<string, unknown>>; revision: number | undefined }> {
-  const describe = await api.settings.describe({})
-  if (!describe.result.ok) throw new Error(rpcFailure(describe.result))
-  const namespace = namespaceOf(describe.result.value, namespaceKey)
-  return { models: modelsOf(namespace, modelsPath), revision: namespace?.revision }
+/** Fresh describe + the target namespace's models/revision for a write, keyed by a prior read. */
+async function freshWriteSection(
+  deps: ProviderDeps,
+  read: LimitRead,
+): Promise<{ namespace: SettingsNamespaceView | undefined; models: Array<Record<string, unknown>> }> {
+  const describe = await deps.remote.settings.describe()
+  if (!describe.ok) throw new Error(rpcFailure(describe.error))
+  const namespace = describe.value.namespaces.find(entry => entry.ns === read.namespace)
+  return { namespace, models: modelsOf(namespace, read.modelsPath) }
 }
 
 /**
  * Persist a per-model context-window override to the provider's settings
  * section (materializing inherited rows, exactly like the built-in editor).
- * @param api - the connected wire face.
- * @param sessionId - owning session.
+ * @param deps - the wire faces and the owning session.
  * @param limit - positive token count.
  * @returns the write outcome.
  */
-export async function applyModelLimit(api: IApiClient, sessionId: SessionId, limit: number): Promise<LimitWrite> {
-  const read = await readLimit(api, sessionId)
+export async function applyModelLimit(deps: ProviderDeps, limit: number): Promise<LimitWrite> {
+  const read = await readLimit(deps)
   if (!read.editable) return { failure: 'model is not configurable in this deployment', limit: undefined }
+  if (read.namespace === '') return { failure: 'settings namespace not found', limit: undefined }
 
-  const { models, revision } = await settingsModels(api, read.namespace, read.modelsPath)
+  const { namespace, models } = await freshWriteSection(deps, read)
+  if (namespace === undefined) return { failure: 'settings namespace not found', limit: undefined }
+
   const ops: SettingsPathOpView[] = [
     { op: 'set', path: [...read.modelsPath], value: withModelLimit(models, read.model, limit) },
   ]
-  const result = await api.settings.mutate({
-    ns: read.namespace,
-    ops,
-    ...revision === undefined ? {} : { expectedRevision: revision },
-  })
-  if (!result.result.ok) return { failure: rpcFailure(result.result), limit: undefined }
+  const result: RemoteResult<SettingsNamespaceView> = await deps.remote.settings.mutate(read.namespace, ops, namespace.revision)
+  if (!result.ok) return { failure: rpcFailure(result.error), limit: undefined }
   return { failure: null, limit }
 }
 
 /**
- * Remove the current model's context-window override. With a user-owned
- * `models` array the row is restored to its base value when it has one,
- * otherwise the field is dropped so the provider default fallback applies.
- * @param api - the connected wire face.
- * @param sessionId - owning session.
+ * Remove the current model's context-window override. The `models` array is
+ * rewritten without the field, so the resolved value falls back to the
+ * provider route's `defaultContextWindow` (or its inherited base value).
+ * @param deps - the wire faces and the owning session.
  * @returns the write outcome.
  */
-export async function resetModelLimit(api: IApiClient, sessionId: SessionId): Promise<LimitWrite> {
-  const read = await readLimit(api, sessionId)
+export async function resetModelLimit(deps: ProviderDeps): Promise<LimitWrite> {
+  const read = await readLimit(deps)
   if (!read.editable) return { failure: 'model is not configurable in this deployment', limit: undefined }
+  if (read.namespace === '') return { failure: 'settings namespace not found', limit: undefined }
 
-  const describe = await api.settings.describe({})
-  if (!describe.result.ok) throw new Error(rpcFailure(describe.result))
-  const namespace = namespaceOf(describe.result.value, read.namespace)
-  const userModels = arrayAt(namespace?.user, read.modelsPath)
-  if (userModels === undefined) {
+  const describe = await deps.remote.settings.describe()
+  if (!describe.ok) return { failure: rpcFailure(describe.error), limit: undefined }
+  const namespace = describe.value.namespaces.find(entry => entry.ns === read.namespace)
+  if (namespace === undefined) return { failure: 'settings namespace not found', limit: undefined }
+
+  const userModels = arrayAt(namespace.user, read.modelsPath)
+  if (userModels === undefined || userModels.length === 0) {
     // No user-owned override to remove; the provider default already applies.
-    return { failure: null, limit: read.limit }
+    return { failure: null, limit: undefined }
   }
-  const baseLimit = arrayAt(namespace?.base, read.modelsPath)
-    ?.find(row => stringOf(row.id) === read.model)
-  const baseValue = typeof baseLimit?.contextWindow === 'number' ? baseLimit.contextWindow : undefined
+  if (!userModels.some(row => stringOf(row.id) === read.model)) {
+    return { failure: null, limit: undefined }
+  }
   const next = userModels.map(row => {
     if (stringOf(row.id) !== read.model) return row
-    if (baseValue !== undefined) return { ...row, contextWindow: baseValue }
     const { contextWindow: _dropped, ...rest } = row
     return rest
   })
   const ops: SettingsPathOpView[] = [{ op: 'set', path: [...read.modelsPath], value: next }]
-  const result = await api.settings.mutate({
-    ns: read.namespace,
-    ops,
-    ...namespace?.revision === undefined ? {} : { expectedRevision: namespace.revision },
-  })
-  if (!result.result.ok) return { failure: rpcFailure(result.result), limit: undefined }
-  return { failure: null, limit: baseValue }
+  const result: RemoteResult<SettingsNamespaceView> = await deps.remote.settings.mutate(read.namespace, ops, namespace.revision)
+  if (!result.ok) return { failure: rpcFailure(result.error), limit: undefined }
+  return { failure: null, limit: undefined }
 }
