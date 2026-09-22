@@ -44,10 +44,22 @@ export const inject = ['slots', 'locale', 'remote', 'sessions']
 export function apply(ctx: ClientContext): void {
   ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'input-limit: dictionaries')
 
-  // The injected services, read structurally so the plugin never imports
-  // harness types into its runtime bundle.
-  const remote = (ctx as unknown as { remote: Remote }).remote
-  const sessions = (ctx as unknown as { sessions: SessionsLike }).sessions
+  // Read the services through `ctx.get` (the global service store — no
+  // inject/fiber path) and detach the concrete faces NOW, inside the plugin
+  // fiber: the component-time callbacks run in the seat's fiber, where
+  // `ctx.remote.session` and friends would hit Cordis's traceable context
+  // proxy and fail with "cannot get property remote.session without inject".
+  const rawRemote = ctx.get('remote') as unknown as {
+    settings: Remote['settings']
+    session: Remote['session']
+    $on: Remote['$on']
+  }
+  const sessions = ctx.get('sessions') as unknown as SessionsLike
+  const remote: Remote = {
+    settings: rawRemote.settings,
+    session: rawRemote.session,
+    $on: (event, listener) => rawRemote.$on(event, listener),
+  }
 
   // One shared refresh fan: any settings-document change reloads every open
   // pill, so an edit made on the Settings page appears without remounting.
