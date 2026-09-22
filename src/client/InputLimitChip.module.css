@@ -128,6 +128,13 @@
   border-color: var(--ilm-accent);
 }
 
+.preview {
+  margin-top: 6px;
+  color: var(--ilm-muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
 .error {
   margin-top: 8px;
   overflow-wrap: anywhere;

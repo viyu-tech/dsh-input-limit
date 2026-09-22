@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="dsh-input-limit">
+  <!-- Rounded dark tile, matching the chip's dark-mode palette -->
+  <rect x="4" y="4" width="56" height="56" rx="14" fill="#1d1e28"/>
+  <!-- The ceiling: the input limit -->
+  <rect x="12" y="12" width="40" height="3.5" rx="1.75" fill="#ececf4"/>
+  <!-- Context usage rising toward the ceiling -->
+  <rect x="14" y="36" width="8" height="14" rx="2.5" fill="#8a8b98"/>
+  <rect x="28" y="27" width="8" height="23" rx="2.5" fill="#5b87ff"/>
+  <rect x="42" y="18" width="8" height="32" rx="2.5" fill="#3b6ef6"/>
+</svg>

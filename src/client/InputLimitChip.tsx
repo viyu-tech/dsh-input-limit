@@ -9,7 +9,7 @@ import type { InjectFace, PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-cli
 // Type-only: pulls the ui-conversation SlotMap merge (the input.right seat).
 import type {} from '@deepseek-ai/dsh-client-ui-conversation/client'
 import type { InputLimitInjected } from './contract.ts'
-import { formatCapacity, formatCompact, parseCapacity } from './capacity.ts'
+import { formatCompact, formatTokens, parseTokens } from './capacity.ts'
 import css from './InputLimitChip.module.css'
 
 /** Full composer-seat component props: runtime share & injected face & the locale seat. */
@@ -79,7 +79,8 @@ export function InputLimitChip({
 
   const openPopover = (): void => {
     setOpen(true)
-    setDraft(current.limit !== undefined ? formatCapacity(current.limit) : '')
+    // The field speaks exact tokens; the preview line derives the K/M spelling.
+    setDraft(current.limit !== undefined ? formatTokens(current.limit) : '')
     setError(null)
   }
   const close = (): void => { setOpen(false) }
@@ -91,14 +92,14 @@ export function InputLimitChip({
   }
 
   const save = (): void => {
-    const parsed = parseCapacity(draft)
-    if (parsed === undefined || Number.isNaN(parsed) || parsed <= 0) {
+    const parsed = parseTokens(draft)
+    if (parsed.status !== 'ok') {
       setError(t('error.invalid'))
       return
     }
     setBusy(true)
     setError(null)
-    write(parsed).then((failure) => {
+    write(parsed.tokens).then((failure) => {
       if (!alive.current) return
       if (failure === null) afterCommit()
       else { setBusy(false); setError(failure) }
@@ -126,7 +127,14 @@ export function InputLimitChip({
   const label = compact !== null
     ? `${t('chip.label')} ${compact}${isDefault ? ` · ${t('chip.defaultTag')}` : ''}`
     : `${t('chip.label')} · ${t('chip.defaultTag')}`
-  const title = `${t('chip.title')} — ${current.model}`
+  const title = current.limit !== undefined
+    ? `${t('chip.title')} · ${formatTokens(current.limit)} tokens — ${current.model}`
+    : `${t('chip.title')} — ${current.model}`
+  // Live K/M equivalent for the draft; hidden when it would just repeat the
+  // typed digits (values below 1K).
+  const parsedDraft = parseTokens(draft)
+  const preview = parsedDraft.status === 'ok' ? formatCompact(parsedDraft.tokens) : null
+  const showPreview = preview !== null && preview !== draft.trim().replaceAll(',', '')
 
   return (
     <span className={css.wrap}>
@@ -152,6 +160,9 @@ export function InputLimitChip({
               <input
                 className={css.field}
                 autoFocus
+                inputMode="numeric"
+                autoComplete="off"
+                spellCheck={false}
                 value={draft}
                 placeholder={t('field.placeholder')}
                 onChange={(event) => { setDraft(event.target.value); setError(null) }}
@@ -161,6 +172,7 @@ export function InputLimitChip({
                 }}
               />
             </label>
+            {showPreview && <div className={css.preview}>≈ {preview}</div>}
             {error !== null && <div className={css.error} role="alert">{error}</div>}
             <div className={css.actions}>
               <button type="button" className={css.secondary} onClick={close} disabled={busy}>{t('cancel')}</button>

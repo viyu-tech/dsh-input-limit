@@ -53,6 +53,7 @@ function unsetPath(root, path) {
  */
 function layeredDoc(base, user, options = {}) {
   let revision = options.revision ?? 7
+  let mutateSpy = null
   const routeKeys = () => [...new Set([
     ...Object.keys(base?.providers ?? {}),
     ...Object.keys(user?.providers ?? {}),
@@ -78,12 +79,16 @@ function layeredDoc(base, user, options = {}) {
   return {
     bump() { revision += 1 },
     user,
+    /** Observe (or short-circuit) the next mutate calls; return an error to fail one. */
+    onMutate(spy) { mutateSpy = spy },
     describe() { return ok(describeValue()) },
     mutate(ns, ops, expectedRevision) {
       assert.equal(ns, NS, 'mutate ns')
       if (expectedRevision !== revision) {
-        return err('settings-rejected', `revision mismatch: expected ${expectedRevision}, have ${revision}`)
+        return err('settings/conflict', `revision mismatch: expected ${expectedRevision}, have ${revision}`)
       }
+      const injected = mutateSpy?.(ops)
+      if (injected !== undefined) return injected
       for (const op of ops) {
         if (op.op === 'set') setPath(user, op.path, op.value)
         else if (op.op === 'unset') unsetPath(user, op.path)
@@ -283,4 +288,51 @@ await scenario('write: subagent sessions are not addressed (seat-level available
   // session must hide the whole pill before any read runs.
   const subagentDeps = depsOf(doc, { subagentAddress: 'catalog/s-0/s-1' })
   assert.notEqual(subagentDeps.sessions.subagentAddress('s-1'), undefined)
+})
+
+await scenario('write: one settings/conflict is retried with a fresh revision', {
+  id: ROUTE, model: MODEL, defaultContextWindow: 262144, models: [],
+}, {
+  id: ROUTE, model: MODEL, models: [],
+}, async (doc) => {
+  // Another writer wins the race once; the retry rebuilds the ops from a fresh
+  // describe and lands the same override.
+  let calls = 0
+  doc.onMutate(() => {
+    calls += 1
+    if (calls === 1) return err('settings/conflict', 'document moved (injected race)')
+    return undefined
+  })
+  const out = await applyModelLimit(depsOf(doc), 131_072)
+  assert.equal(out.failure, null, 'the conflict retry lands the write')
+  assert.equal(out.limit, 131_072)
+  assert.equal(calls, 2, 'exactly one retry')
+  assert.deepEqual(doc.user.providers[ROUTE].models, [{ id: MODEL, contextWindow: 131_072 }])
+})
+
+await scenario('write: a non-conflict failure surfaces instead of retrying', {
+  id: ROUTE, model: MODEL, defaultContextWindow: 262144, models: [],
+}, {
+  id: ROUTE, model: MODEL, models: [],
+}, async (doc) => {
+  let calls = 0
+  doc.onMutate(() => {
+    calls += 1
+    return err('settings/rejected', 'invalid model row')
+  })
+  const out = await applyModelLimit(depsOf(doc), 131_072)
+  assert.equal(out.failure, 'invalid model row (settings/rejected)', 'failure surfaced to the UI')
+  assert.equal(calls, 1, 'no retry for non-conflict refusals')
+})
+
+await scenario('write: reset on a document with no override is a no-op (no mutate)', {
+  id: ROUTE, model: MODEL, defaultContextWindow: 262144, models: [],
+}, {
+  id: ROUTE, model: MODEL, models: [],
+}, async (doc) => {
+  let calls = 0
+  doc.onMutate(() => { calls += 1; return undefined })
+  const out = await resetModelLimit(depsOf(doc))
+  assert.equal(out.failure, null)
+  assert.equal(calls, 0, 'empty op list never reaches mutate')
 })

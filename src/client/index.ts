@@ -33,8 +33,16 @@ const NS = 'inputLimit'
 
 export const name = 'dsh-input-limit'
 
-/** Required services: the seat's slot registry, locale, the remote face, and sessions. */
-export const inject = ['slots', 'locale', 'remote', 'sessions']
+/**
+ * Required services: the seat's slot registry, locale, the remote face, the
+ * Typert remote sub-namespaces this plugin reads through, and sessions.
+ *
+ * `remote.settings` / `remote.session` must be listed explicitly — Cordis
+ * resolves them through its traceable context proxy (`reflect.props['remote.x']`),
+ * so merely injecting `remote` still throws "cannot get property remote.settings
+ * without inject" when the faces are accessed below.
+ */
+export const inject = ['slots', 'locale', 'remote', 'remote.session', 'remote.settings', 'sessions']
 
 /**
  * Client plugin body: register the input-limit chip into the composer's right

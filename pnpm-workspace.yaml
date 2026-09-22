@@ -1,0 +1,3 @@
+# Allow esbuild's postinstall to run (needed for tsdown's native binary).
+onlyBuiltDependencies:
+  - esbuild

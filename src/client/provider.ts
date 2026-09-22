@@ -95,7 +95,10 @@ async function currentSelection(deps: ProviderDeps): Promise<ModelSelection | nu
   const durable = projected?.next ?? projected?.lastUsed ?? null
   if (durable !== null && durable !== undefined) return durable
   const catalog = await deps.remote.session.modelCatalog()
-  if (!catalog.ok) return null
+  if (!catalog.ok) {
+    console.warn('[dsh-input-limit] model catalog unavailable:', catalog.error.message)
+    return null
+  }
   return catalog.value.default
 }
 
@@ -171,15 +174,35 @@ function withModelLimit(
   return [...models, { id: model, contextWindow: limit }]
 }
 
-/** Fresh describe + the target namespace's models/revision for a write, keyed by a prior read. */
-async function freshWriteSection(
+/** Failure line for a model whose provider has no settings section. */
+const NOT_CONFIGURABLE = 'model is not configurable in this deployment'
+
+/**
+ * Persist one write through a fresh describe, retried once when the document
+ * moved between the read and the write (`settings/conflict`): both operations
+ * are full-array `set`s rebuilt from the fresh view, so replaying them with a
+ * fresh revision is safe. An empty op list (nothing to change) succeeds
+ * without touching the document.
+ */
+async function persistModels(
   deps: ProviderDeps,
   read: LimitRead,
-): Promise<{ namespace: SettingsNamespaceView | undefined; models: Array<Record<string, unknown>> }> {
-  const describe = await deps.remote.settings.describe()
-  if (!describe.ok) throw new Error(rpcFailure(describe.error))
-  const namespace = describe.value.namespaces.find(entry => entry.ns === read.namespace)
-  return { namespace, models: modelsOf(namespace, read.modelsPath) }
+  build: (namespace: SettingsNamespaceView) => readonly SettingsPathOpView[],
+): Promise<LimitWrite> {
+  let failure: string | null = null
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const describe = await deps.remote.settings.describe()
+    if (!describe.ok) return { failure: rpcFailure(describe.error), limit: undefined }
+    const namespace = describe.value.namespaces.find(entry => entry.ns === read.namespace)
+    if (namespace === undefined) return { failure: 'settings namespace not found', limit: undefined }
+    const ops = build(namespace)
+    if (ops.length === 0) return { failure: null, limit: undefined }
+    const result: RemoteResult<SettingsNamespaceView> = await deps.remote.settings.mutate(read.namespace, ops, namespace.revision)
+    if (result.ok) return { failure: null, limit: undefined }
+    failure = rpcFailure(result.error)
+    if (result.error.code !== 'settings/conflict') break
+  }
+  return { failure, limit: undefined }
 }
 
 /**
@@ -191,52 +214,34 @@ async function freshWriteSection(
  */
 export async function applyModelLimit(deps: ProviderDeps, limit: number): Promise<LimitWrite> {
   const read = await readLimit(deps)
-  if (!read.editable) return { failure: 'model is not configurable in this deployment', limit: undefined }
-  if (read.namespace === '') return { failure: 'settings namespace not found', limit: undefined }
-
-  const { namespace, models } = await freshWriteSection(deps, read)
-  if (namespace === undefined) return { failure: 'settings namespace not found', limit: undefined }
-
-  const ops: SettingsPathOpView[] = [
-    { op: 'set', path: [...read.modelsPath], value: withModelLimit(models, read.model, limit) },
-  ]
-  const result: RemoteResult<SettingsNamespaceView> = await deps.remote.settings.mutate(read.namespace, ops, namespace.revision)
-  if (!result.ok) return { failure: rpcFailure(result.error), limit: undefined }
-  return { failure: null, limit }
+  if (!read.editable || read.namespace === '') return { failure: NOT_CONFIGURABLE, limit: undefined }
+  const outcome = await persistModels(deps, read, namespace => [
+    { op: 'set', path: [...read.modelsPath], value: withModelLimit(modelsOf(namespace, read.modelsPath), read.model, limit) },
+  ])
+  return outcome.failure === null ? { failure: null, limit } : outcome
 }
 
 /**
- * Remove the current model's context-window override. The `models` array is
- * rewritten without the field, so the resolved value falls back to the
- * provider route's `defaultContextWindow` (or its inherited base value).
+ * Remove the current model's context-window override. The user-owned `models`
+ * array is rewritten without the field, so the resolved value falls back to
+ * the provider route's `defaultContextWindow` (or its inherited base value).
  * @param deps - the wire faces and the owning session.
  * @returns the write outcome.
  */
 export async function resetModelLimit(deps: ProviderDeps): Promise<LimitWrite> {
   const read = await readLimit(deps)
-  if (!read.editable) return { failure: 'model is not configurable in this deployment', limit: undefined }
-  if (read.namespace === '') return { failure: 'settings namespace not found', limit: undefined }
-
-  const describe = await deps.remote.settings.describe()
-  if (!describe.ok) return { failure: rpcFailure(describe.error), limit: undefined }
-  const namespace = describe.value.namespaces.find(entry => entry.ns === read.namespace)
-  if (namespace === undefined) return { failure: 'settings namespace not found', limit: undefined }
-
-  const userModels = arrayAt(namespace.user, read.modelsPath)
-  if (userModels === undefined || userModels.length === 0) {
-    // No user-owned override to remove; the provider default already applies.
-    return { failure: null, limit: undefined }
-  }
-  if (!userModels.some(row => stringOf(row.id) === read.model)) {
-    return { failure: null, limit: undefined }
-  }
-  const next = userModels.map(row => {
-    if (stringOf(row.id) !== read.model) return row
-    const { contextWindow: _dropped, ...rest } = row
-    return rest
+  if (!read.editable || read.namespace === '') return { failure: NOT_CONFIGURABLE, limit: undefined }
+  return persistModels(deps, read, namespace => {
+    const userModels = arrayAt(namespace.user, read.modelsPath)
+    if (userModels === undefined || !userModels.some(row => stringOf(row.id) === read.model)) return []
+    return [{
+      op: 'set',
+      path: [...read.modelsPath],
+      value: userModels.map(row => {
+        if (stringOf(row.id) !== read.model) return row
+        const { contextWindow: _dropped, ...rest } = row
+        return rest
+      }),
+    }]
   })
-  const ops: SettingsPathOpView[] = [{ op: 'set', path: [...read.modelsPath], value: next }]
-  const result: RemoteResult<SettingsNamespaceView> = await deps.remote.settings.mutate(read.namespace, ops, namespace.revision)
-  if (!result.ok) return { failure: rpcFailure(result.error), limit: undefined }
-  return { failure: null, limit: undefined }
 }
