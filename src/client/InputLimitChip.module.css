@@ -1,0 +1,178 @@
+.wrap {
+  /* Self-contained palette: light defaults, dark-mode overrides below, and
+     --ilm-* hooks a host theme may repoint. */
+  --ilm-border: #dfe1e8;
+  --ilm-bg: #ffffff;
+  --ilm-bg-hover: #f3f4f8;
+  --ilm-text: #3b3c47;
+  --ilm-text-strong: #1d1e28;
+  --ilm-muted: #8a8b98;
+  --ilm-accent: #3b6ef6;
+  --ilm-accent-text: #ffffff;
+  --ilm-shadow: 0 8px 24px rgba(15, 17, 32, 0.14);
+
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+
+@media (prefers-color-scheme: dark) {
+  .wrap {
+    --ilm-border: #33343f;
+    --ilm-bg: #24252f;
+    --ilm-bg-hover: #2c2d3a;
+    --ilm-text: #d6d7e0;
+    --ilm-text-strong: #ececf4;
+    --ilm-muted: #8a8b99;
+    --ilm-accent: #5b87ff;
+    --ilm-accent-text: #0f1020;
+    --ilm-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+  }
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  height: 26px;
+  padding: 0 9px;
+  border: 1px solid var(--ilm-border);
+  border-radius: 6px;
+  background: var(--ilm-bg);
+  color: var(--ilm-text);
+  font: inherit;
+  font-size: 12px;
+  line-height: 1;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.chip:hover {
+  border-color: var(--ilm-muted);
+  background: var(--ilm-bg-hover);
+}
+
+.backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  background: transparent;
+  border: 0;
+  cursor: default;
+}
+
+.popover {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  right: 0;
+  z-index: 50;
+  width: 300px;
+  padding: 12px 12px 14px;
+  border: 1px solid var(--ilm-border);
+  border-radius: 10px;
+  background: var(--ilm-bg);
+  box-shadow: var(--ilm-shadow);
+  color: var(--ilm-text);
+  font-size: 13px;
+  text-align: left;
+}
+
+.popTitle {
+  color: var(--ilm-text-strong);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.modelName {
+  margin-top: 4px;
+  overflow: hidden;
+  color: var(--ilm-muted);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.popHint {
+  margin-top: 8px;
+  color: var(--ilm-muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.fieldLabel {
+  display: block;
+  margin-top: 10px;
+}
+
+.fieldLabel > span {
+  display: block;
+  margin-bottom: 4px;
+  color: var(--ilm-text);
+  font-size: 12px;
+}
+
+.field {
+  box-sizing: border-box;
+  width: 100%;
+  height: 32px;
+  padding: 0 9px;
+  border: 1px solid var(--ilm-border);
+  border-radius: 6px;
+  background: var(--ilm-bg);
+  color: var(--ilm-text-strong);
+  font: inherit;
+  font-size: 13px;
+  outline: none;
+}
+
+.field:focus {
+  border-color: var(--ilm-accent);
+}
+
+.error {
+  margin-top: 8px;
+  overflow-wrap: anywhere;
+  color: #d64545;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.actions button {
+  height: 28px;
+  padding: 0 12px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.actions button:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+.secondary {
+  border-color: var(--ilm-border) !important;
+  background: var(--ilm-bg);
+  color: var(--ilm-text);
+}
+
+.secondary:hover:not(:disabled) {
+  background: var(--ilm-bg-hover);
+}
+
+.primary {
+  background: var(--ilm-accent);
+  color: var(--ilm-accent-text);
+}
+
+.primary:hover:not(:disabled) {
+  filter: brightness(1.05);
+}

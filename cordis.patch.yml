@@ -1,0 +1,4 @@
+# dsh-input-limit patch layer — inserted into a profile by `dsh plugin add`.
+- insert:
+    - id: input-limit
+      name: dsh-input-limit
